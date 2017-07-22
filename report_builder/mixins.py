@@ -551,9 +551,11 @@ class GetFieldsMixin(object):
             path += field_name
             path += '__'
             if direct:
-                try:
+                if hasattr(field, 'related'):
                     new_model = field.related.parent_model
-                except AttributeError:
+                elif hasattr(field, 'related_model'):
+                    new_model = field.related_model
+                else:
                     new_model = field.related.model
                 path_verbose = new_model.__name__.lower()
             else:  # Indirect related field

@@ -18,6 +18,7 @@ from functools import reduce
 import time
 import datetime
 import re
+from django.utils import timezone
 
 AUTH_USER_MODEL = getattr(settings, 'AUTH_USER_MODEL', 'auth.User')
 
@@ -309,6 +310,7 @@ class Report(models.Model):
         # unnecessary joins
         filters = {}
         excludes = {}
+
         for filter_field in report.filterfield_set.order_by('position'):
             # exclude properties from standard ORM filtering
             if filter_field.field_type == "Property":
@@ -324,6 +326,7 @@ class Report(models.Model):
             if filter_field.filter_type:
                 filter_string += '__' + filter_field.filter_type
 
+            filter_field.filter_value = filter_field.get_time_from_string(filter_field.filter_value)
             # Check for special types such as isnull
             if (filter_field.filter_type == "isnull" and
                filter_field.filter_value in ["0", "False"]):
@@ -544,10 +547,11 @@ class FilterField(AbstractField):
             # These filter types ignore their value.
             pass
         elif self.field_type == 'DateField' and self.filter_type != 'isnull':
-            date_form = forms.DateField()
-            date_value = parser.parse(self.filter_value).date()
-            date_form.clean(date_value)
-            self.filter_value = str(date_value)
+            if self.filter_value not in ['today', 'yesterday', 'thisweek', 'lastweek', 'thismonth', 'lastmonth', 'thisyear', 'lastyear']:
+                date_form = forms.DateField()
+                date_value = parser.parse(self.filter_value).date()
+                date_form.clean(date_value)
+                self.filter_value = str(date_value)
 
         return super(FilterField, self).clean()
 
@@ -558,6 +562,17 @@ class FilterField(AbstractField):
             model_field = None
         if model_field and model_field.choices:
             return model_field.choices
+
+    def get_time_from_string(self, time_string):
+        to_return = time_string
+        time_now = timezone.now()
+        today = time_now.date()
+        if time_string == "today":
+            to_return = today
+        elif time_string == "yesterday":
+            time_delta = timezone.timedelta(days=1)
+            to_return = today - time_delta
+        return to_return
 
     def filter_property(self, value):
         """ Determine if passed value should be filtered or not """
@@ -592,14 +607,35 @@ class FilterField(AbstractField):
                 filter_value = str(time.mktime(filter_value_dt.timetuple()))
             except ValueError:
                 pass
-        if filter_type == 'gt' and Decimal(value) > Decimal(filter_value):
+
+        if filter_type == 'gt' and self.field_type in ['DateField', 'DateTimeField']:
+            filter_field.filter_value = self.get_time_from_string(filter_value)
+            if value > filter_field.filter_value:
+                filtered = False
+        elif filter_type == 'gt' and Decimal(value) > Decimal(filter_value):
             filtered = False
-        if filter_type == 'gte' and Decimal(value) >= Decimal(filter_value):
+
+        if filter_type == 'gte' and self.field_type in ['DateField', 'DateTimeField']:
+            filter_field.filter_value = self.get_time_from_string(filter_value)
+            if value >= filter_field.filter_value:
+                filtered = False
+        elif filter_type == 'gte' and Decimal(value) >= Decimal(filter_value):
             filtered = False
-        if filter_type == 'lt' and Decimal(value) < Decimal(filter_value):
+
+        if filter_type == 'lt' and self.field_type in ['DateField', 'DateTimeField']:
+            filter_field.filter_value = self.get_time_from_string(filter_value)
+            if value < filter_field.filter_value:
+                filtered = False
+        elif filter_type == 'lt' and Decimal(value) < Decimal(filter_value):
             filtered = False
-        if filter_type == 'lte' and Decimal(value) <= Decimal(filter_value):
+
+        if filter_type == 'lte' and self.field_type in ['DateField', 'DateTimeField']:
+            filter_field.filter_value = self.get_time_from_string(filter_value)
+            if value <= filter_field.filter_value:
+                filtered = False
+        elif filter_type == 'lte' and Decimal(value) <= Decimal(filter_value):
             filtered = False
+
         if filter_type == 'startswith' and str(value).startswith(str(filter_value)):
             filtered = False
         if filter_type == 'istartswith' and str(value).lower().startswith(str(filter_value)):
